@@ -32,6 +32,7 @@ async function run() {
     // 🗄️ ডাটাবেজ এবং স্টার্টআপ কালেকশন ডিফাইন করা হলো
     const database = client.db("startupforge_db_user");
     const startupCollection = database.collection("startups");
+    const opportunityCollection = database.collection("opportunities");
 
     // ==========================================
     // 🚀 ১. নতুন স্টার্টআপ তৈরি করা (POST API)
@@ -86,14 +87,14 @@ async function run() {
     });
 
     // ==========================================
-    // 📝 ৩. আইডি দিয়ে স্টার্টআপ প্রোফাইল আপডেট করা (PUT API) - [🎯 FIXED]
+    // 📝 ৩. আইডি দিয়ে স্টার্টআপ প্রোফাইল আপডেট করা (PUT API)
     // ==========================================
     app.put("/api/startups/:id", async (req, res) => {
       try {
         const id = req.params.id;
         const updatedData = req.body;
         
-        // মঙ্গোডিবির আপডেট অবজেক্টে সরাসরি স্ট্রিং আইডি রাখা যায় না, তাই এটি ডিলিট করা হলো
+        // মঙ্গোডিবির আপডেট অবজেক্টে সরাসরি স্ট্রিং আইডি রাখা যায় না, তাই এটি ডিলিট করা হলো
         delete updatedData._id; 
 
         const filter = { _id: new ObjectId(id) };
@@ -106,14 +107,14 @@ async function run() {
             description: updatedData.description,
             founderEmail: updatedData.founderEmail,
             status: "pending", // আপডেট করার পর আবার পেন্ডিং হবে
-            updatedAt: new Date() // আপডেটের সময় ট্র্যাক করার জন্য
+            updatedAt: new Date() // আপডেটের সময় ট্র্যাক করার জন্য
           }
         };
 
         const result = await startupCollection.updateOne(filter, updateDoc);
         
         if (result.matchedCount === 1) {
-          // আপডেট হওয়া লেটেস্ট ডেটা ডাটাবেজ থেকে এনে ফ্রন্টএন্ডে পাঠানো
+          // আপডেট হওয়া লেটেস্ট ডেটা ডাটাবেজ থেকে এনে ফ্রন্টএন্ডে পাঠানো
           const updatedStartup = await startupCollection.findOne(filter);
           res.status(200).json({ success: true, data: updatedStartup });
         } else {
@@ -144,6 +145,41 @@ async function run() {
       }
     });
 
+    // ==========================================
+    // 💼 ৫. নতুন অপরচুনিটি তৈরি করা (POST API) -> [🎯 NEW]
+    // ==========================================
+    app.post("/api/opportunities", async (req, res) => {
+      try {
+        const opportunityData = req.body;
+
+        // ডাটাবেজে সেভ করার আগে টাইমিং ট্র্যাক রাখার জন্য createdAt যোগ করা হলো
+        opportunityData.createdAt = new Date();
+
+        // opportunities কালেকশনে ডেটা ইনসার্ট করা
+        const result = await opportunityCollection.insertOne(opportunityData);
+        
+        // সদ্য সেভ হওয়া ডেটাটি কনফার্মেশন হিসেবে রিটার্ন করা
+        const savedOpportunity = await opportunityCollection.findOne({ _id: result.insertedId });
+        res.status(201).json({ success: true, data: savedOpportunity });
+
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    // ==========================================
+    // 🔍 ৬. সব অপরচুনিটি গেট করা (GET API) -> [🎯 NEW]
+    // ==========================================
+    app.get("/api/opportunities", async (req, res) => {
+      try {
+        // সব অপরচুনিটি রিসেন্ট ডেট অনুযায়ী সর্ট করে নিয়ে আসা
+        const opportunities = await opportunityCollection.find().sort({ createdAt: -1 }).toArray();
+        res.status(200).json({ success: true, data: opportunities });
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
@@ -154,5 +190,5 @@ async function run() {
 run().catch(console.dir);
 
 app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`);
+  console.log(`Server is running on port ${port}`);
 });
