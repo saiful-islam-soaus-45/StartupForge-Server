@@ -1,5 +1,5 @@
 const express = require("express");
-const cors = require("cors"); // ফ্রন্টএন্ড-ব্যাকএন্ড কানেকশনের জন্য cors ব্যবহার করা ভালো
+const cors = require("cors"); 
 const app = express();
 const port = 5000;
 require("dotenv").config();
@@ -7,8 +7,8 @@ require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 // 📌 Middlewares
-app.use(cors()); // CORS পলিসি হ্যান্ডেল করার জন্য
-app.use(express.json()); // ফ্রন্টএন্ড থেকে আসা JSON বডি রিড করার জন্য (মোস্ট ইম্পর্ট্যান্ট)
+app.use(cors()); 
+app.use(express.json()); 
 
 app.get("/", (req, res) => {
   res.send("Hello World!");
@@ -41,7 +41,6 @@ async function run() {
       try {
         const startupData = req.body;
 
-        // চেক করুন এই founderEmail দিয়ে অলরেডি কোনো স্টার্টআপ আছে কিনা
         const existingStartup = await startupCollection.findOne({ 
           founderEmail: startupData.founderEmail 
         });
@@ -53,13 +52,9 @@ async function run() {
           });
         }
 
-        // ডাটাবেজে ইনসার্ট করার আগে তৈরি হওয়ার সময় যুক্ত করে দেওয়া
         startupData.createdAt = new Date();
-
-        // মঙ্গোডিবি কালেকশনে ডেটা সেভ করা
         const result = await startupCollection.insertOne(startupData);
         
-        // সেভ হওয়া নতুন ডেটাটি রেসপন্স হিসেবে পাঠানো
         const savedStartup = await startupCollection.findOne({ _id: result.insertedId });
         res.status(201).json({ success: true, data: savedStartup });
 
@@ -93,8 +88,6 @@ async function run() {
       try {
         const id = req.params.id;
         const updatedData = req.body;
-        
-        // মঙ্গোডিবির আপডেট অবজেক্টে সরাসরি স্ট্রিং আইডি রাখা যায় না, তাই এটি ডিলিট করা হলো
         delete updatedData._id; 
 
         const filter = { _id: new ObjectId(id) };
@@ -106,15 +99,14 @@ async function run() {
             fundingStage: updatedData.fundingStage,
             description: updatedData.description,
             founderEmail: updatedData.founderEmail,
-            status: "pending", // আপডেট করার পর আবার পেন্ডিং হবে
-            updatedAt: new Date() // আপডেটের সময় ট্র্যাক করার জন্য
+            status: "pending", 
+            updatedAt: new Date() 
           }
         };
 
         const result = await startupCollection.updateOne(filter, updateDoc);
         
         if (result.matchedCount === 1) {
-          // আপডেট হওয়া লেটেস্ট ডেটা ডাটাবেজ থেকে এনে ফ্রন্টএন্ডে পাঠানো
           const updatedStartup = await startupCollection.findOne(filter);
           res.status(200).json({ success: true, data: updatedStartup });
         } else {
@@ -131,7 +123,7 @@ async function run() {
     app.delete("/api/startups/:id", async (req, res) => {
       try {
         const id = req.params.id;
-        const query = { _id: new ObjectId(id) }; // MongoDB এর ObjectId ফরম্যাটে কনভার্ট করা
+        const query = { _id: new ObjectId(id) }; 
         
         const result = await startupCollection.deleteOne(query);
         
@@ -146,19 +138,15 @@ async function run() {
     });
 
     // ==========================================
-    // 💼 ৫. নতুন অপরচুনিটি তৈরি করা (POST API) -> [🎯 NEW]
+    // 💼 ৫. নতুন অপরচুনিটি তৈরি করা (POST API) 
     // ==========================================
     app.post("/api/opportunities", async (req, res) => {
       try {
         const opportunityData = req.body;
-
-        // ডাটাবেজে সেভ করার আগে টাইমিং ট্র্যাক রাখার জন্য createdAt যোগ করা হলো
         opportunityData.createdAt = new Date();
 
-        // opportunities কালেকশনে ডেটা ইনসার্ট করা
         const result = await opportunityCollection.insertOne(opportunityData);
         
-        // সদ্য সেভ হওয়া ডেটাটি কনফার্মেশন হিসেবে রিটার্ন করা
         const savedOpportunity = await opportunityCollection.findOne({ _id: result.insertedId });
         res.status(201).json({ success: true, data: savedOpportunity });
 
@@ -168,13 +156,64 @@ async function run() {
     });
 
     // ==========================================
-    // 🔍 ৬. সব অপরচুনিটি গেট করা (GET API) -> [🎯 NEW]
+    // 🔍 ৬. সব অপরচুনিটি গেট করা (GET API) 
     // ==========================================
     app.get("/api/opportunities", async (req, res) => {
       try {
-        // সব অপরচুনিটি রিসেন্ট ডেট অনুযায়ী সর্ট করে নিয়ে আসা
         const opportunities = await opportunityCollection.find().sort({ createdAt: -1 }).toArray();
         res.status(200).json({ success: true, data: opportunities });
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    // ========================================================
+    // 📝 ৭. [🎯 NEW ADDED] আইডি দিয়ে অপরচুনিটি আপডেট করা (PUT API)
+    // ========================================================
+    app.put("/api/opportunities/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const updatedData = req.body;
+        delete updatedData._id; // সিকিউরিটির জন্য মেইন অবজেক্ট আইডি রিমুভ করা হলো
+
+        const filter = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: {
+            roleTitle: updatedData.roleTitle,
+            requiredSkills: updatedData.requiredSkills,
+            workType: updatedData.workType,
+            commitmentLevel: updatedData.commitmentLevel,
+            deadline: updatedData.deadline,
+            updatedAt: new Date()
+          }
+        };
+
+        const result = await opportunityCollection.updateOne(filter, updateDoc);
+        if (result.matchedCount === 1) {
+          const latestData = await opportunityCollection.findOne(filter);
+          res.status(200).json({ success: true, data: latestData });
+        } else {
+          res.status(404).json({ success: false, message: "Opportunity not found to update" });
+        }
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    // =========================================================
+    // 🗑️ ৮. [🎯 NEW ADDED] আইডি দিয়ে অপরচুনিটি ডিলিট করা (DELETE API)
+    // =========================================================
+    app.delete("/api/opportunities/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const result = await opportunityCollection.deleteOne(query);
+        
+        if (result.deletedCount === 1) {
+          res.status(200).json({ success: true, message: "Opportunity deleted successfully" });
+        } else {
+          res.status(404).json({ success: false, message: "Opportunity not found to delete" });
+        }
       } catch (error) {
         res.status(500).json({ success: false, message: error.message });
       }
