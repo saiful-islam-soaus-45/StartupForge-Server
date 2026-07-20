@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors"); 
 const app = express();
-const port = 5000;
+const port = process.env.PORT || 5000; 
 require("dotenv").config();
 
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
@@ -11,7 +11,7 @@ app.use(cors());
 app.use(express.json()); 
 
 app.get("/", (req, res) => {
-  res.send("Hello World!");
+  res.send("StartupForge Server is running!");
 });
 
 const uri = process.env.MONGODB_URI;
@@ -29,10 +29,12 @@ async function run() {
     // Connect the client to the server
     await client.connect();
 
-    // 🗄️ ডাটাবেজ এবং স্টার্টআপ কালেকশন ডিফাইন করা হলো
+    // 🗄️ ডাটাবেজ এবং কালেকশনসমূহ
     const database = client.db("startupforge_db_user");
     const startupCollection = database.collection("startups");
     const opportunityCollection = database.collection("opportunities");
+    const applicationCollection = database.collection("applications"); 
+    const userCollection = database.collection("users"); 
 
     // ==========================================
     // 🚀 ১. নতুন স্টার্টআপ তৈরি করা (POST API)
@@ -168,13 +170,13 @@ async function run() {
     });
 
     // ========================================================
-    // 📝 ৭. [🎯 NEW ADDED] আইডি দিয়ে অপরচুনিটি আপডেট করা (PUT API)
+    // 📝 ৭. আইডি দিয়ে অপরচুনিটি আপডেট করা (PUT API)
     // ========================================================
     app.put("/api/opportunities/:id", async (req, res) => {
       try {
         const id = req.params.id;
         const updatedData = req.body;
-        delete updatedData._id; // সিকিউরিটির জন্য মেইন অবজেক্ট আইডি রিমুভ করা হলো
+        delete updatedData._id; 
 
         const filter = { _id: new ObjectId(id) };
         const updateDoc = {
@@ -201,7 +203,7 @@ async function run() {
     });
 
     // =========================================================
-    // 🗑️ ৮. [🎯 NEW ADDED] আইডি দিয়ে অপরচুনিটি ডিলিট করা (DELETE API)
+    // 🗑️ ৮. আইডি দিয়ে অপরচুনিটি ডিলিট করা (DELETE API)
     // =========================================================
     app.delete("/api/opportunities/:id", async (req, res) => {
       try {
@@ -214,6 +216,123 @@ async function run() {
         } else {
           res.status(404).json({ success: false, message: "Opportunity not found to delete" });
         }
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    // =======================================================================
+    // 🎯 ৯. কোলাবোরেটরের নতুন অ্যাপ্লিকেশন সাবমিট করা (POST API)
+    // =======================================================================
+    app.post("/api/applications", async (req, res) => {
+      try {
+        const applicationData = req.body;
+        
+        if (!applicationData.opportunityId || !applicationData.applicantEmail || !applicationData.portfolioLink || !applicationData.motivationMessage) {
+          return res.status(400).json({ success: false, message: "All fields are required" });
+        }
+
+        const newApplication = {
+          opportunityId: applicationData.opportunityId, 
+          applicantEmail: applicationData.applicantEmail,
+          portfolioLink: applicationData.portfolioLink,
+          motivationMessage: applicationData.motivationMessage,
+          status: "Pending", 
+          appliedAt: new Date()
+        };
+
+        const result = await applicationCollection.insertOne(newApplication);
+        const savedApplication = await applicationCollection.findOne({ _id: result.insertedId });
+
+        res.status(201).json({ success: true, data: savedApplication });
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    // ========================================================================================
+    // 🔍 ১০. নির্দিষ্ট কোলাবোরেটরের ইমেইল অনুযায়ী সব অ্যাপ্লিকেশন গেট করা (🎯 ফিক্সড লুকআপ)
+    // ========================================================================================
+    app.get("/api/applications/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
+
+        const userApplications = await applicationCollection.aggregate([
+          { $match: { applicantEmail: email } },
+          
+          // কাস্টম টেক্সট আইডি (যেমন: OOP-110652) দিয়ে সরাসরি সুযোগের ম্যাচিং করা হচ্ছে
+          {
+            $lookup: {
+              from: "opportunities",
+              localField: "opportunityId",
+              foreignField: "opportunityId", 
+              as: "opportunityDetails"
+            }
+          },
+          { $unwind: { path: "$opportunityDetails", preserveNullAndEmptyArrays: true } },
+
+          // সুযোগের ফাউণ্ডার ইমেইলের সাথে স্টার্টআপ কালেকশন জয়েন করা হচ্ছে
+          {
+            $lookup: {
+              from: "startups",
+              localField: "opportunityDetails.founderEmail", 
+              foreignField: "founderEmail",
+              as: "startupDetails"
+            }
+          },
+          { $unwind: { path: "$startupDetails", preserveNullAndEmptyArrays: true } },
+
+          { $sort: { appliedAt: -1 } }
+        ]).toArray();
+
+        res.status(200).json({ success: true, data: userApplications });
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    // =======================================================================
+    // 🎯 ১১. ইমেইল দিয়ে প্রোফাইল ডাটা গেট করা (GET API)
+    // =======================================================================
+    app.get("/api/profile/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
+        const userProfile = await userCollection.findOne({ email: email });
+        
+        if (!userProfile) {
+          return res.status(404).json({ success: false, message: "User profile not found" });
+        }
+        
+        res.status(200).json({ success: true, data: userProfile });
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    // =======================================================================
+    // 📝 ১২. ইমেইল দিয়ে প্রোফাইল আপডেট করা (PUT API)
+    // =======================================================================
+    app.put("/api/profile/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
+        const updatedData = req.body;
+        delete updatedData._id; 
+
+        const filter = { email: email };
+        const updateDoc = {
+          $set: {
+            name: updatedData.name,
+            image: updatedData.image, 
+            skills: updatedData.skills, 
+            bio: updatedData.bio, 
+            updatedAt: new Date()
+          }
+        };
+
+        const result = await userCollection.updateOne(filter, updateDoc, { upsert: true });
+        const latestProfile = await userCollection.findOne(filter);
+        
+        res.status(200).json({ success: true, data: latestProfile });
       } catch (error) {
         res.status(500).json({ success: false, message: error.message });
       }
