@@ -36,30 +36,70 @@ async function run() {
     const applicationCollection = database.collection("applications"); 
     const userCollection = database.collection("users"); 
 
+    // =======================================================================
+    // 🌐 ১৩. সব স্টার্টআপ কার্ড আকারে দেখানোর জন্য (GET API)
+    // =======================================================================
+    app.get("/api/public/startups", async (req, res) => {
+      try {
+        const startups = await startupCollection.find().sort({ createdAt: -1 }).toArray();
+        res.status(200).json({ success: true, data: startups });
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    // =======================================================================
+    // 🌐 ১৪. আইডি দিয়ে নির্দিষ্ট স্টার্টআপের ডিটেইলস দেখা (GET API)
+    // =======================================================================
+    app.get("/api/public/startups/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ success: false, message: "Invalid Startup ID format" });
+        }
+        const startup = await startupCollection.findOne({ _id: new ObjectId(id) });
+        if (!startup) {
+          return res.status(404).json({ success: false, message: "Startup not found" });
+        }
+        res.status(200).json({ success: true, data: startup });
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    // =======================================================================
+    // 🌐 ১৫. আইডি দিয়ে নির্দিষ্ট অপরচুনিটির ডিটেইলস দেখা (GET API)
+    // =======================================================================
+    app.get("/api/public/opportunities/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ success: false, message: "Invalid Opportunity ID format" });
+        }
+        const opportunity = await opportunityCollection.findOne({ _id: new ObjectId(id) });
+        if (!opportunity) {
+          return res.status(404).json({ success: false, message: "Opportunity not found" });
+        }
+        res.status(200).json({ success: true, data: opportunity });
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
     // ==========================================
     // 🚀 ১. নতুন স্টার্টআপ তৈরি করা (POST API)
     // ==========================================
     app.post("/api/startups", async (req, res) => {
       try {
         const startupData = req.body;
-
-        const existingStartup = await startupCollection.findOne({ 
-          founderEmail: startupData.founderEmail 
-        });
-
+        const existingStartup = await startupCollection.findOne({ founderEmail: startupData.founderEmail });
         if (existingStartup) {
-          return res.status(400).json({ 
-            success: false, 
-            message: "You already have a startup registered!" 
-          });
+          return res.status(400).json({ success: false, message: "You already have a startup registered!" });
         }
-
         startupData.createdAt = new Date();
         const result = await startupCollection.insertOne(startupData);
-        
         const savedStartup = await startupCollection.findOne({ _id: result.insertedId });
         res.status(201).json({ success: true, data: savedStartup });
-
       } catch (error) {
         res.status(500).json({ success: false, message: error.message });
       }
@@ -72,11 +112,9 @@ async function run() {
       try {
         const email = req.params.email;
         const startup = await startupCollection.findOne({ founderEmail: email });
-        
         if (!startup) {
           return res.status(404).json({ success: false, message: "Startup not found" });
         }
-        
         res.status(200).json({ success: true, data: startup });
       } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -107,7 +145,6 @@ async function run() {
         };
 
         const result = await startupCollection.updateOne(filter, updateDoc);
-        
         if (result.matchedCount === 1) {
           const updatedStartup = await startupCollection.findOne(filter);
           res.status(200).json({ success: true, data: updatedStartup });
@@ -126,9 +163,7 @@ async function run() {
       try {
         const id = req.params.id;
         const query = { _id: new ObjectId(id) }; 
-        
         const result = await startupCollection.deleteOne(query);
-        
         if (result.deletedCount === 1) {
           res.status(200).json({ success: true, message: "Startup profile deleted successfully" });
         } else {
@@ -146,12 +181,9 @@ async function run() {
       try {
         const opportunityData = req.body;
         opportunityData.createdAt = new Date();
-
         const result = await opportunityCollection.insertOne(opportunityData);
-        
         const savedOpportunity = await opportunityCollection.findOne({ _id: result.insertedId });
         res.status(201).json({ success: true, data: savedOpportunity });
-
       } catch (error) {
         res.status(500).json({ success: false, message: error.message });
       }
@@ -210,7 +242,6 @@ async function run() {
         const id = req.params.id;
         const query = { _id: new ObjectId(id) };
         const result = await opportunityCollection.deleteOne(query);
-        
         if (result.deletedCount === 1) {
           res.status(200).json({ success: true, message: "Opportunity deleted successfully" });
         } else {
@@ -228,12 +259,15 @@ async function run() {
       try {
         const applicationData = req.body;
         
-        if (!applicationData.opportunityId || !applicationData.applicantEmail || !applicationData.portfolioLink || !applicationData.motivationMessage) {
-          return res.status(400).json({ success: false, message: "All fields are required" });
+        if (!applicationData.applicantEmail || !applicationData.portfolioLink || !applicationData.motivationMessage) {
+          return res.status(400).json({ success: false, message: "Required fields are missing" });
         }
 
         const newApplication = {
-          opportunityId: applicationData.opportunityId, 
+          opportunityId: applicationData.opportunityId ? new ObjectId(applicationData.opportunityId) : null, 
+          roleTitle: applicationData.roleTitle || null,
+          startupId: applicationData.startupId ? new ObjectId(applicationData.startupId) : null,
+          founderEmail: applicationData.founderEmail || null, 
           applicantEmail: applicationData.applicantEmail,
           portfolioLink: applicationData.portfolioLink,
           motivationMessage: applicationData.motivationMessage,
@@ -250,33 +284,101 @@ async function run() {
       }
     });
 
+    // =======================================================================
+    // 📋 ৯.১ সব অ্যাপ্লিকেশন বা নির্দিষ্ট অপরচুনিটির অ্যাপ্লিকেশন গেট করা (GET API)
+    // =======================================================================
+    app.get("/api/applications", async (req, res) => {
+      try {
+        const { opportunityId } = req.query;
+        let query = {};
+        if (opportunityId) {
+          query.opportunityId = new ObjectId(opportunityId);
+        }
+        const applications = await applicationCollection.find(query).sort({ appliedAt: -1 }).toArray();
+        res.status(200).json({ success: true, data: applications });
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    // =======================================================================
+    // 📝 ৯.২ আইডি দিয়ে নির্দিষ্ট অ্যাপ্লিকেশনের স্ট্যাটাস আপডেট করা (PUT API)
+    // =======================================================================
+    app.put("/api/applications/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { status } = req.body;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ success: false, message: "Invalid Application ID format" });
+        }
+
+        const filter = { _id: new ObjectId(id) };
+        const updateDoc = {
+          $set: {
+            status: status,
+            updatedAt: new Date()
+          }
+        };
+
+        const result = await applicationCollection.updateOne(filter, updateDoc);
+        if (result.matchedCount === 1) {
+          const updatedApplication = await applicationCollection.findOne(filter);
+          res.status(200).json({ success: true, data: updatedApplication });
+        } else {
+          res.status(404).json({ success: false, message: "Application not found to update" });
+        }
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
     // ========================================================================================
-    // 🔍 ১০. নির্দিষ্ট কোলাবোরেটরের ইমেইল অনুযায়ী সব অ্যাপ্লিকেশন গেট করা (🎯 ফিক্সড লুকআপ)
+    // 🔍 ১০. ইমেইল অনুযায়ী সব অ্যাপ্লিকেশন গেট করা (🎯 ২-ইন-১ কোলাবোরেটর ও ফাউন্ডার ফিক্সড লুকআপ)
     // ========================================================================================
     app.get("/api/applications/:email", async (req, res) => {
       try {
         const email = req.params.email;
 
         const userApplications = await applicationCollection.aggregate([
-          { $match: { applicantEmail: email } },
+          // 🎯 ফিল্টার: কোলাবোরেটরের নিজের পাঠানো অথবা ফাউন্ডারের কাছে আসা যেকোনো অ্যাপ্লিকেশন
+          { 
+            $match: { 
+              $or: [
+                { applicantEmail: email },
+                { founderEmail: email }
+              ]
+            } 
+          },
           
-          // কাস্টম টেক্সট আইডি (যেমন: OOP-110652) দিয়ে সরাসরি সুযোগের ম্যাচিং করা হচ্ছে
+          // 🛠️ সুযোগের ম্যাচিং ফিক্স (foreignField হবে "_id")
           {
             $lookup: {
               from: "opportunities",
               localField: "opportunityId",
-              foreignField: "opportunityId", 
+              foreignField: "_id", 
               as: "opportunityDetails"
             }
           },
           { $unwind: { path: "$opportunityDetails", preserveNullAndEmptyArrays: true } },
 
-          // সুযোগের ফাউণ্ডার ইমেইলের সাথে স্টার্টআপ কালেকশন জয়েন করা হচ্ছে
+          // 🎯 স্টার্টআপ কালেকশন জয়েন করা (সরাসরি startupId অথবা founderEmail দিয়ে)
           {
             $lookup: {
               from: "startups",
-              localField: "opportunityDetails.founderEmail", 
-              foreignField: "founderEmail",
+              let: { sId: "$startupId", fEmail: "$founderEmail" },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: {
+                      $or: [
+                        { $eq: ["$_id", "$$sId"] },
+                        { $eq: ["$founderEmail", "$$fEmail"] }
+                      ]
+                    }
+                  }
+                }
+              ],
               as: "startupDetails"
             }
           },
@@ -298,11 +400,9 @@ async function run() {
       try {
         const email = req.params.email;
         const userProfile = await userCollection.findOne({ email: email });
-        
         if (!userProfile) {
           return res.status(404).json({ success: false, message: "User profile not found" });
         }
-        
         res.status(200).json({ success: true, data: userProfile });
       } catch (error) {
         res.status(500).json({ success: false, message: error.message });
@@ -331,7 +431,6 @@ async function run() {
 
         const result = await userCollection.updateOne(filter, updateDoc, { upsert: true });
         const latestProfile = await userCollection.findOne(filter);
-        
         res.status(200).json({ success: true, data: latestProfile });
       } catch (error) {
         res.status(500).json({ success: false, message: error.message });
