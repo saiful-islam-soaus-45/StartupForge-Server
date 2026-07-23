@@ -37,6 +37,78 @@ async function run() {
     const userCollection = database.collection("users"); 
 
     // =======================================================================
+    // 📊 ফাউন্ডার ড্যাশবোর্ডের রিয়েল-টাইম ডাটা কাউন্ট এপিআই (GET API) [UPDATED]
+    // =======================================================================
+    app.get("/api/founder/stats", async (req, res) => {
+      try {
+        const { email } = req.query; // ফ্রন্টএন্ড থেকে পাঠানো ইমেইল বা আইডি
+
+        if (!email) {
+          return res.status(400).json({ success: false, message: "Founder identifier is required" });
+        }
+
+        // ইউজারের সঠিক তথ্য কালেকশন থেকে খুঁজে বের করা
+        const userDoc = await userCollection.findOne({
+          $or: [
+            { email: email }, 
+            { _id: ObjectId.isValid(email) ? new ObjectId(email) : null },
+            { name: email } // যদি নাম বা ইউজারনেম পাস হয়
+          ]
+        });
+        
+        const userEmail = userDoc ? userDoc.email : email;
+        const userName = userDoc ? userDoc.name : "Test";
+
+        // অপরচুনিটি খোঁজার জন্য বিভিন্ন ফিল্ড চেক করা (founderEmail, email, অথবা সব অপরচুনিটি ফেচ করে ফিল্টার করা যেতে পারে)
+        const founderOpportunities = await opportunityCollection.find({
+          $or: [
+            { founderEmail: userEmail }, 
+            { email: userEmail },
+            { founderEmail: email },
+            { email: email },
+            { createdByName: userName },
+            { roleTitle: { $exists: true } } // যদি টেবিলে অপরচুনিটিগুলো সব ফাউন্ডারেরই হয়ে থাকে
+          ]
+        }).toArray();
+        
+        let opportunityIds = founderOpportunities.map(opp => opp._id);
+        let totalOpportunities = founderOpportunities.length;
+
+        // অ্যাপ্লিকেশন কাউন্ট
+        const totalApplications = await applicationCollection.countDocuments({ 
+          $or: [
+            { founderEmail: userEmail },
+            { email: userEmail },
+            { founderEmail: email },
+            { opportunityId: { $in: opportunityIds } }
+          ]
+        });
+
+        // এক্সেপ্টেড মেম্বার কাউন্ট
+        const acceptedMembers = await applicationCollection.countDocuments({ 
+          $or: [
+            { founderEmail: userEmail },
+            { email: userEmail },
+            { founderEmail: email },
+            { opportunityId: { $in: opportunityIds } }
+          ],
+          status: { $regex: /^(accepted|approved|accept)$/i } 
+        });
+
+        res.status(200).json({
+          success: true,
+          data: {
+            totalOpportunities,
+            totalApplications,
+            acceptedMembers,
+          },
+        });
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    // =======================================================================
     // 🌐 ১৩. সব স্টার্টআপ কার্ড আকারে দেখানোর জন্য (GET API)
     // =======================================================================
     app.get("/api/public/startups", async (req, res) => {
@@ -122,7 +194,7 @@ async function run() {
     });
 
     // ==========================================
-    // 📝 ৩. আইডি দিয়ে স্টার্টআপ প্রোফাইল আপডেট করা (PUT API)
+    // 📝 ۳. আইডি দিয়ে স্টার্টআপ প্রোফাইল আপডেট করা (PUT API)
     // ==========================================
     app.put("/api/startups/:id", async (req, res) => {
       try {
@@ -175,13 +247,24 @@ async function run() {
     });
 
     // ==========================================
-    // 💼 ৫. নতুন অপরচুনিটি তৈরি করা (POST API) 
+    // 💼 ৫. নতুন অপরচুনিটি তৈরি করা (POST API) [FIXED]
     // ==========================================
     app.post("/api/opportunities", async (req, res) => {
       try {
         const opportunityData = req.body;
-        opportunityData.createdAt = new Date();
-        const result = await opportunityCollection.insertOne(opportunityData);
+        
+        const newOpportunity = {
+          roleTitle: opportunityData.roleTitle,
+          requiredSkills: opportunityData.requiredSkills,
+          workType: opportunityData.workType,
+          commitmentLevel: opportunityData.commitmentLevel,
+          deadline: opportunityData.deadline,
+          founderEmail: opportunityData.founderEmail || opportunityData.email || null,
+          startupId: opportunityData.startupId ? new ObjectId(opportunityData.startupId) : null,
+          createdAt: new Date()
+        };
+
+        const result = await opportunityCollection.insertOne(newOpportunity);
         const savedOpportunity = await opportunityCollection.findOne({ _id: result.insertedId });
         res.status(201).json({ success: true, data: savedOpportunity });
       } catch (error) {
@@ -218,6 +301,7 @@ async function run() {
             workType: updatedData.workType,
             commitmentLevel: updatedData.commitmentLevel,
             deadline: updatedData.deadline,
+            founderEmail: updatedData.founderEmail || updatedData.email,
             updatedAt: new Date()
           }
         };
@@ -341,7 +425,6 @@ async function run() {
         const email = req.params.email;
 
         const userApplications = await applicationCollection.aggregate([
-          // 🎯 ফিল্টার: কোলাবোরেটরের নিজের পাঠানো অথবা ফাউন্ডারের কাছে আসা যেকোনো অ্যাপ্লিকেশন
           { 
             $match: { 
               $or: [
@@ -350,8 +433,6 @@ async function run() {
               ]
             } 
           },
-          
-          // 🛠️ সুযোগের ম্যাচিং ফিক্স (foreignField হবে "_id")
           {
             $lookup: {
               from: "opportunities",
@@ -361,8 +442,6 @@ async function run() {
             }
           },
           { $unwind: { path: "$opportunityDetails", preserveNullAndEmptyArrays: true } },
-
-          // 🎯 স্টার্টআপ কালেকশন জয়েন করা (সরাসরি startupId অথবা founderEmail দিয়ে)
           {
             $lookup: {
               from: "startups",
@@ -383,7 +462,6 @@ async function run() {
             }
           },
           { $unwind: { path: "$startupDetails", preserveNullAndEmptyArrays: true } },
-
           { $sort: { appliedAt: -1 } }
         ]).toArray();
 
