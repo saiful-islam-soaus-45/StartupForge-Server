@@ -476,6 +476,19 @@ async function run() {
       try {
         const applicationData = req.body;
 
+        // Founder check
+        const user = await userCollection.findOne({
+          email: applicationData.applicantEmail,
+        });
+
+        if (user && user.role === "founder") {
+          return res.status(403).json({
+            success: false,
+            message: "Founder cannot apply.",
+          });
+        }
+
+        // Duplicate check
         const alreadyApplied = await applicationCollection.findOne({
           opportunityId: new ObjectId(applicationData.opportunityId),
           applicantEmail: applicationData.applicantEmail,
@@ -488,25 +501,14 @@ async function run() {
           });
         }
 
-        if (
-          !applicationData.applicantEmail ||
-          !applicationData.portfolioLink ||
-          !applicationData.motivationMessage
-        ) {
-          return res
-            .status(400)
-            .json({ success: false, message: "Required fields are missing" });
-        }
-
+        // Save application
         const newApplication = {
-          opportunityId: applicationData.opportunityId
-            ? new ObjectId(applicationData.opportunityId)
-            : null,
-          roleTitle: applicationData.roleTitle || null,
+          opportunityId: new ObjectId(applicationData.opportunityId),
           startupId: applicationData.startupId
             ? new ObjectId(applicationData.startupId)
             : null,
-          founderEmail: applicationData.founderEmail || null,
+          roleTitle: applicationData.roleTitle,
+          founderEmail: applicationData.founderEmail,
           applicantEmail: applicationData.applicantEmail,
           portfolioLink: applicationData.portfolioLink,
           motivationMessage: applicationData.motivationMessage,
@@ -515,47 +517,102 @@ async function run() {
         };
 
         const result = await applicationCollection.insertOne(newApplication);
+
         const savedApplication = await applicationCollection.findOne({
           _id: result.insertedId,
         });
 
-        res.status(201).json({ success: true, data: savedApplication });
+        res.status(201).json({
+          success: true,
+          data: savedApplication,
+        });
       } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        res.status(500).json({
+          success: false,
+          message: error.message,
+        });
       }
     });
 
     //  সব অ্যাপ্লিকেশন বা নির্দিষ্ট অপরচুনিটির অ্যাপ্লিকেশন গেট করা (GET API)
-   app.get("/api/applications", async (req, res) => {
-  try {
-    const { founderEmail, opportunityId } = req.query;
+    app.get("/api/applications", async (req, res) => {
+      try {
+        console.log("Query:", req.query);
 
-    let query = {};
+        const { founderEmail, applicantEmail, opportunityId } = req.query;
 
-    if (founderEmail) {
-      query.founderEmail = founderEmail;
-    }
+        let query = {};
 
-    if (opportunityId) {
-      query.opportunityId = new ObjectId(opportunityId);
-    }
+        if (founderEmail) {
+          query.founderEmail = founderEmail;
+        }
 
-    const applications = await applicationCollection
-      .find(query)
-      .sort({ appliedAt: -1 })
-      .toArray();
+        if (applicantEmail) {
+          query.applicantEmail = applicantEmail;
+        }
 
-    res.status(200).json({
-      success: true,
-      data: applications,
+        if (opportunityId) {
+          query.opportunityId = new ObjectId(opportunityId);
+        }
+
+        console.log("Mongo Query:", query);
+
+        const applications = await applicationCollection
+          .aggregate([
+            {
+              $match: query,
+            },
+
+            {
+              $lookup: {
+                from: "startups",
+                localField: "startupId",
+                foreignField: "_id",
+                as: "startupDetails",
+              },
+            },
+
+            {
+              $unwind: {
+                path: "$startupDetails",
+                preserveNullAndEmptyArrays: true,
+              },
+            },
+
+            {
+              $lookup: {
+                from: "opportunities",
+                localField: "opportunityId",
+                foreignField: "_id",
+                as: "opportunityDetails",
+              },
+            },
+
+            {
+              $unwind: {
+                path: "$opportunityDetails",
+                preserveNullAndEmptyArrays: true,
+              },
+            },
+
+            {
+              $sort: {
+                appliedAt: -1,
+              },
+            },
+          ])
+          .toArray();
+
+        console.log("Applications Found:", applications.length);
+
+        res.json({
+          success: true,
+          data: applications,
+        });
+      } catch (err) {
+        console.log(err);
+      }
     });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-});
 
     //  আইডি দিয়ে নির্দিষ্ট অ্যাপ্লিকেশনের স্ট্যাটাস আপডেট করা (PUT API)
     app.put("/api/applications/:id", async (req, res) => {
@@ -693,6 +750,109 @@ async function run() {
         res.status(200).json({ success: true, data: latestProfile });
       } catch (error) {
         res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    app.get("/api/admin/users", async (req, res) => {
+      try {
+        const users = await userCollection.find().toArray();
+
+        res.json({
+          success: true,
+          data: users,
+        });
+      } catch (err) {
+        res.status(500).json({
+          success: false,
+          message: err.message,
+        });
+      }
+    });
+
+    app.get("/api/auth/check-user-status", async (req, res) => {
+  try {
+    const { email } = req.query;
+
+    const user = await userCollection.findOne({ email });
+
+    if (!user) {
+      return res.json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (user.status === "blocked") {
+      return res.json({
+        success: false,
+        blocked: true,
+      });
+    }
+
+    return res.json({
+      success: true,
+      blocked: false,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+});
+
+    app.patch("/api/admin/users/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { status } = req.body;
+
+        await userCollection.updateOne(
+          {
+            _id: new ObjectId(id),
+          },
+          {
+            $set: {
+              status,
+            },
+          },
+        );
+
+        res.json({
+          success: true,
+          message: "User updated successfully",
+        });
+      } catch (err) {
+        res.status(500).json({
+          success: false,
+          message: err.message,
+        });
+      }
+    });
+
+    app.patch("/api/admin/users/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { status } = req.body;
+
+        const result = await userCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              status,
+            },
+          },
+        );
+
+        res.json({
+          success: true,
+          message: `User ${status} successfully`,
+          result,
+        });
+      } catch (err) {
+        res.status(500).json({
+          success: false,
+          message: err.message,
+        });
       }
     });
 
