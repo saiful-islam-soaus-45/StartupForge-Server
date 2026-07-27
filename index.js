@@ -40,116 +40,193 @@ async function run() {
 
     // subscription api
     app.post("/api/subscription", async (req, res) => {
-  try {
-    const { user, session_id } = req.body;
+      try {
+        const { user, session_id } = req.body;
 
-    const isExistSession = await subscriptionCollection.findOne({
-      sessionId: session_id,
-    });
+        const isExistSession = await subscriptionCollection.findOne({
+          sessionId: session_id,
+        });
 
-    if (isExistSession) {
-      return res.json({
-        success: true,
-        message: "Already upgraded",
-      });
-    }
+        if (isExistSession) {
+          return res.json({
+            success: true,
+            message: "Already upgraded",
+          });
+        }
 
-    // এখানেই পরিবর্তন করবে
-    await subscriptionCollection.insertOne({
-      userId: new ObjectId(user.id),
-      sessionId: session_id,
+        // এখানেই পরিবর্তন করবে
+        await subscriptionCollection.insertOne({
+          userId: new ObjectId(user.id),
+          sessionId: session_id,
 
-      amount: 14,
-      currency: "USD",
-      paymentStatus: "Paid",
+          amount: 14,
+          currency: "USD",
+          paymentStatus: "Paid",
 
-      createdAt: new Date(),
-    });
+          createdAt: new Date(),
+        });
 
-    await userCollection.updateOne(
-      { _id: new ObjectId(user.id) },
-      {
-        $set: {
-          plan: "pro",
-        },
+        await userCollection.updateOne(
+          { _id: new ObjectId(user.id) },
+          {
+            $set: {
+              plan: "pro",
+            },
+          },
+        );
+
+        const updatedUser = await userCollection.findOne({
+          _id: new ObjectId(user.id),
+        });
+
+        res.json({
+          success: true,
+          user: updatedUser,
+        });
+      } catch (err) {
+        res.status(500).json({
+          success: false,
+          message: err.message,
+        });
       }
-    );
-
-    const updatedUser = await userCollection.findOne({
-      _id: new ObjectId(user.id),
     });
 
-    res.json({
-      success: true,
-      user: updatedUser,
+    // api overview
+
+    app.get("/api/admin/overview", async (req, res) => {
+      try {
+        const totalUsers = await userCollection.countDocuments();
+        const totalStartups = await startupCollection.countDocuments();
+        const totalOpportunities = await opportunityCollection.countDocuments();
+
+        // 👇 এখানে বসাও
+        const allSubscriptions = await subscriptionCollection.find().toArray();
+
+        console.log("Total subscriptions:", allSubscriptions.length);
+        console.log(allSubscriptions);
+
+        // 👇 তারপর aggregate
+        const revenueResult = await subscriptionCollection
+          .aggregate([
+            {
+              $group: {
+                _id: null,
+                totalRevenue: {
+                  $sum: "$amount",
+                },
+              },
+            },
+          ])
+          .toArray();
+
+        console.log("Revenue Result:", revenueResult);
+
+        const totalRevenue =
+          revenueResult.length > 0 ? revenueResult[0].totalRevenue : 0;
+
+        res.json({
+          success: true,
+          data: {
+            users: totalUsers,
+            startups: totalStartups,
+            opportunities: totalOpportunities,
+            revenue: totalRevenue,
+          },
+        });
+      } catch (err) {
+        res.status(500).json({
+          success: false,
+          message: err.message,
+        });
+      }
     });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      message: err.message,
+
+    // startup toggling
+    app.patch("/api/admin/startups/:id/status", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { status } = req.body;
+
+        const result = await startupCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              status,
+            },
+          },
+        );
+
+        res.json({
+          success: true,
+          result,
+        });
+      } catch (err) {
+        res.status(500).json({
+          success: false,
+          message: err.message,
+        });
+      }
     });
-  }
-});
 
     // transaction history api
     // ================= Admin Transactions =================
-app.get("/api/admin/transactions", async (req, res) => {
-  try {
-    const transactions = await subscriptionCollection
-      .aggregate([
-        {
-          $lookup: {
-            from: "user",
-            localField: "userId",
-            foreignField: "_id",
-            as: "user",
-          },
-        },
-        {
-          $unwind: "$user",
-        },
-        {
-          $project: {
-            _id: 1,
-            sessionId: 1,
-            createdAt: 1,
-
-            userName: "$user.name",
-            userEmail: "$user.email",
-
-            // Amount
-            amount: {
-              $ifNull: ["$amount", 14],
+    app.get("/api/admin/transactions", async (req, res) => {
+      try {
+        const transactions = await subscriptionCollection
+          .aggregate([
+            {
+              $lookup: {
+                from: "user",
+                localField: "userId",
+                foreignField: "_id",
+                as: "user",
+              },
             },
-
-            currency: {
-              $ifNull: ["$currency", "USD"],
+            {
+              $unwind: "$user",
             },
+            {
+              $project: {
+                _id: 1,
+                sessionId: 1,
+                createdAt: 1,
 
-            paymentStatus: {
-              $ifNull: ["$paymentStatus", "Paid"],
+                userName: "$user.name",
+                userEmail: "$user.email",
+
+                // Amount
+                amount: {
+                  $ifNull: ["$amount", 14],
+                },
+
+                currency: {
+                  $ifNull: ["$currency", "USD"],
+                },
+
+                paymentStatus: {
+                  $ifNull: ["$paymentStatus", "Paid"],
+                },
+              },
             },
-          },
-        },
-        {
-          $sort: {
-            createdAt: -1,
-          },
-        },
-      ])
-      .toArray();
+            {
+              $sort: {
+                createdAt: -1,
+              },
+            },
+          ])
+          .toArray();
 
-    res.json({
-      success: true,
-      data: transactions,
+        res.json({
+          success: true,
+          data: transactions,
+        });
+      } catch (err) {
+        res.status(500).json({
+          success: false,
+          message: err.message,
+        });
+      }
     });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      message: err.message,
-    });
-  }
-});
 
     app.get("/api/my-opportunities-count", async (req, res) => {
       try {
@@ -243,38 +320,36 @@ app.get("/api/admin/transactions", async (req, res) => {
     });
 
     //  সব স্টার্টআপ কার্ড আকারে দেখানোর জন্য (GET API)
-   app.get("/api/public/startups", async (req, res) => {
-  try {
-    const { email } = req.query;
+    app.get("/api/public/startups", async (req, res) => {
+      try {
+        const { email } = req.query;
 
-    const query = {
-      $or: [
-        { status: "approved" },
-      ],
-    };
+        const query = {
+          $or: [{ status: "approved" }],
+        };
 
-    if (email) {
-      query.$or.push({
-        founderEmail: email,
-      });
-    }
+        if (email) {
+          query.$or.push({
+            founderEmail: email,
+          });
+        }
 
-    const startups = await startupCollection
-      .find(query)
-      .sort({ createdAt: -1 })
-      .toArray();
+        const startups = await startupCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .toArray();
 
-    res.status(200).json({
-      success: true,
-      data: startups,
+        res.status(200).json({
+          success: true,
+          data: startups,
+        });
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          message: error.message,
+        });
+      }
     });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-});
 
     //  আইডি দিয়ে নির্দিষ্ট স্টার্টআপের ডিটেইলস দেখা (GET API)
     app.get("/api/public/startups/:id", async (req, res) => {
@@ -563,19 +638,27 @@ app.get("/api/admin/transactions", async (req, res) => {
       try {
         const applicationData = req.body;
 
-        // Founder check
+        // 🔹 User check
         const user = await userCollection.findOne({
           email: applicationData.applicantEmail,
         });
 
-        if (user && user.role === "founder") {
-          return res.status(403).json({
+        if (!user) {
+          return res.status(404).json({
             success: false,
-            message: "Founder cannot apply.",
+            message: "User not found.",
           });
         }
 
-        // Duplicate check
+        // 🔹 Only collaborators can apply
+        if (user.role?.toLowerCase() !== "collaborator") {
+          return res.status(403).json({
+            success: false,
+            message: "Only collaborators can apply for opportunities.",
+          });
+        }
+
+        // 🔹 Duplicate check
         const alreadyApplied = await applicationCollection.findOne({
           opportunityId: new ObjectId(applicationData.opportunityId),
           applicantEmail: applicationData.applicantEmail,
@@ -1003,6 +1086,82 @@ app.get("/api/admin/transactions", async (req, res) => {
         res.json({
           success: true,
           result,
+        });
+      } catch (err) {
+        res.status(500).json({
+          success: false,
+          message: err.message,
+        });
+      }
+    });
+
+    // charts
+    app.get("/api/admin/charts", async (req, res) => {
+      try {
+        // User Roles
+        const founder = await userCollection.countDocuments({
+          role: "founder",
+        });
+
+        const collaborator = await userCollection.countDocuments({
+          role: "collaborator",
+        });
+
+        const admin = await userCollection.countDocuments({
+          role: "admin",
+        });
+
+        // Startup Status
+        const approved = await startupCollection.countDocuments({
+          status: "approved",
+        });
+
+        const pending = await startupCollection.countDocuments({
+          status: "pending",
+        });
+
+        // Revenue Trend (শেষ 7টি Payment)
+        const revenueTrend = await subscriptionCollection
+          .find({})
+          .sort({ createdAt: 1 })
+          .toArray();
+
+        const revenue = revenueTrend.map((item) => ({
+          date: new Date(item.createdAt).toLocaleDateString("en-GB", {
+            day: "2-digit",
+            month: "short",
+          }),
+          revenue: item.amount,
+        }));
+
+        // Opportunity Growth
+        const opportunityTrend = await opportunityCollection
+          .find({})
+          .sort({ createdAt: 1 })
+          .toArray();
+
+        const opportunities = opportunityTrend.map((item, index) => ({
+          name: index + 1,
+          total: index + 1,
+        }));
+
+        res.json({
+          success: true,
+          data: {
+            roles: [
+              { name: "Founder", value: founder },
+              { name: "Collaborator", value: collaborator },
+              { name: "Admin", value: admin },
+            ],
+
+            startups: [
+              { name: "Approved", total: approved },
+              { name: "Pending", total: pending },
+            ],
+
+            revenue,
+            opportunities,
+          },
         });
       } catch (err) {
         res.status(500).json({
