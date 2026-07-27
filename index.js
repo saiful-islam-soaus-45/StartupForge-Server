@@ -40,50 +40,116 @@ async function run() {
 
     // subscription api
     app.post("/api/subscription", async (req, res) => {
-      try {
-        const { user, session_id } = req.body;
+  try {
+    const { user, session_id } = req.body;
 
-        const isExistSession = await subscriptionCollection.findOne({
-          sessionId: session_id,
-        });
+    const isExistSession = await subscriptionCollection.findOne({
+      sessionId: session_id,
+    });
 
-        if (isExistSession) {
-          return res.json({
-            success: true,
-            message: "Already upgraded",
-          });
-        }
+    if (isExistSession) {
+      return res.json({
+        success: true,
+        message: "Already upgraded",
+      });
+    }
 
-        await subscriptionCollection.insertOne({
-          userId: new ObjectId(user.id),
-          sessionId: session_id,
-          createdAt: new Date(),
-        });
+    // এখানেই পরিবর্তন করবে
+    await subscriptionCollection.insertOne({
+      userId: new ObjectId(user.id),
+      sessionId: session_id,
 
-        await userCollection.updateOne(
-          { _id: new ObjectId(user.id) },
-          {
-            $set: {
-              plan: "pro",
+      amount: 14,
+      currency: "USD",
+      paymentStatus: "Paid",
+
+      createdAt: new Date(),
+    });
+
+    await userCollection.updateOne(
+      { _id: new ObjectId(user.id) },
+      {
+        $set: {
+          plan: "pro",
+        },
+      }
+    );
+
+    const updatedUser = await userCollection.findOne({
+      _id: new ObjectId(user.id),
+    });
+
+    res.json({
+      success: true,
+      user: updatedUser,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+});
+
+    // transaction history api
+    // ================= Admin Transactions =================
+app.get("/api/admin/transactions", async (req, res) => {
+  try {
+    const transactions = await subscriptionCollection
+      .aggregate([
+        {
+          $lookup: {
+            from: "user",
+            localField: "userId",
+            foreignField: "_id",
+            as: "user",
+          },
+        },
+        {
+          $unwind: "$user",
+        },
+        {
+          $project: {
+            _id: 1,
+            sessionId: 1,
+            createdAt: 1,
+
+            userName: "$user.name",
+            userEmail: "$user.email",
+
+            // Amount
+            amount: {
+              $ifNull: ["$amount", 14],
+            },
+
+            currency: {
+              $ifNull: ["$currency", "USD"],
+            },
+
+            paymentStatus: {
+              $ifNull: ["$paymentStatus", "Paid"],
             },
           },
-        );
+        },
+        {
+          $sort: {
+            createdAt: -1,
+          },
+        },
+      ])
+      .toArray();
 
-        const updatedUser = await userCollection.findOne({
-          _id: new ObjectId(user.id),
-        });
-
-        res.json({
-          success: true,
-          user: updatedUser,
-        });
-      } catch (err) {
-        res.status(500).json({
-          success: false,
-          message: err.message,
-        });
-      }
+    res.json({
+      success: true,
+      data: transactions,
     });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+});
 
     app.get("/api/my-opportunities-count", async (req, res) => {
       try {
