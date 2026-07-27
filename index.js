@@ -536,23 +536,46 @@ async function run() {
 
     // Get all opportunities
     app.get("/api/opportunities", async (req, res) => {
-      try {
-        const opportunities = await opportunityCollection
-          .find({})
-          .sort({ createdAt: -1 })
-          .toArray();
+  try {
+    const { search, workType, commitmentLevel } = req.query;
+    let query = {};
 
-        res.status(200).json({
-          success: true,
-          data: opportunities,
-        });
-      } catch (error) {
-        res.status(500).json({
-          success: false,
-          message: error.message,
-        });
-      }
+    // ১. Role Title এবং Required Skills এর ওপর ভিত্তি করে $regex দিয়ে কেস-ইনসেন্সিটিভ সার্চ
+    if (search) {
+      query.$or = [
+        { roleTitle: { $regex: search, $options: "i" } },
+        { requiredSkills: { $regex: search, $options: "i" } }
+      ];
+    }
+
+    // ২. Work Type এর ওপর ভিত্তি করে $in ফিল্টার
+    if (workType) {
+      const workTypesArray = workType.split(",");
+      query.workType = { $in: workTypesArray };
+    }
+
+    // ৩. Commitment Level এর ওপর ভিত্তি করে $in ফিল্টার
+    if (commitmentLevel) {
+      const commitmentsArray = commitmentLevel.split(",");
+      query.commitmentLevel = { $in: commitmentsArray };
+    }
+
+    const opportunities = await opportunityCollection
+      .find(query)
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.status(200).json({
+      success: true,
+      data: opportunities,
     });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+});
 
     // Logged-in user's opportunities
     app.get("/api/opportunities/user/:userId", async (req, res) => {
