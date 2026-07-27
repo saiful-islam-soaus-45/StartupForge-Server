@@ -177,17 +177,38 @@ async function run() {
     });
 
     //  সব স্টার্টআপ কার্ড আকারে দেখানোর জন্য (GET API)
-    app.get("/api/public/startups", async (req, res) => {
-      try {
-        const startups = await startupCollection
-          .find()
-          .sort({ createdAt: -1 })
-          .toArray();
-        res.status(200).json({ success: true, data: startups });
-      } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-      }
+   app.get("/api/public/startups", async (req, res) => {
+  try {
+    const { email } = req.query;
+
+    const query = {
+      $or: [
+        { status: "approved" },
+      ],
+    };
+
+    if (email) {
+      query.$or.push({
+        founderEmail: email,
+      });
+    }
+
+    const startups = await startupCollection
+      .find(query)
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.status(200).json({
+      success: true,
+      data: startups,
     });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+});
 
     //  আইডি দিয়ে নির্দিষ্ট স্টার্টআপের ডিটেইলস দেখা (GET API)
     app.get("/api/public/startups/:id", async (req, res) => {
@@ -770,36 +791,36 @@ async function run() {
     });
 
     app.get("/api/auth/check-user-status", async (req, res) => {
-  try {
-    const { email } = req.query;
+      try {
+        const { email } = req.query;
 
-    const user = await userCollection.findOne({ email });
+        const user = await userCollection.findOne({ email });
 
-    if (!user) {
-      return res.json({
-        success: false,
-        message: "User not found",
-      });
-    }
+        if (!user) {
+          return res.json({
+            success: false,
+            message: "User not found",
+          });
+        }
 
-    if (user.status === "blocked") {
-      return res.json({
-        success: false,
-        blocked: true,
-      });
-    }
+        if (user.status === "blocked") {
+          return res.json({
+            success: false,
+            blocked: true,
+          });
+        }
 
-    return res.json({
-      success: true,
-      blocked: false,
+        return res.json({
+          success: true,
+          blocked: false,
+        });
+      } catch (err) {
+        res.status(500).json({
+          success: false,
+          message: err.message,
+        });
+      }
     });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      message: err.message,
-    });
-  }
-});
 
     app.patch("/api/admin/users/:id", async (req, res) => {
       try {
@@ -846,6 +867,75 @@ async function run() {
         res.json({
           success: true,
           message: `User ${status} successfully`,
+          result,
+        });
+      } catch (err) {
+        res.status(500).json({
+          success: false,
+          message: err.message,
+        });
+      }
+    });
+
+    // Admin dashboard এর জন্য সব স্টার্টআপের লিস্ট দেখানোর এপিআই তৈরি করা
+    app.get("/api/admin/startups", async (req, res) => {
+      try {
+        const startups = await startupCollection
+          .find()
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.json({
+          success: true,
+          data: startups,
+        });
+      } catch (err) {
+        res.status(500).json({
+          success: false,
+          message: err.message,
+        });
+      }
+    });
+
+    // Admin dashboard এর জন্য স্টার্টআপের স্ট্যাটাস approved করার এপিআই তৈরি করা
+    app.patch("/api/admin/startups/:id/approve", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        const result = await startupCollection.updateOne(
+          {
+            _id: new ObjectId(id),
+          },
+          {
+            $set: {
+              status: "approved",
+            },
+          },
+        );
+
+        res.json({
+          success: true,
+          result,
+        });
+      } catch (err) {
+        res.status(500).json({
+          success: false,
+          message: err.message,
+        });
+      }
+    });
+
+    // remove sratup এর জন্য স্টার্টআপের স্ট্যাটাস rejected করার এপিআই তৈরি করা
+    app.delete("/api/admin/startups/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        const result = await startupCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        res.json({
+          success: true,
           result,
         });
       } catch (err) {
