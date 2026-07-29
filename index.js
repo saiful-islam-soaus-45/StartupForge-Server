@@ -5,6 +5,7 @@ const port = process.env.PORT || 5000;
 require("dotenv").config();
 
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const { createRemoteJWKSet, jwtVerify } = require("jose-cjs");
 
 //  Middlewares
 app.use(cors());
@@ -33,6 +34,87 @@ async function run() {
     const applicationCollection = database.collection("applications");
     const userCollection = database.collection("user");
     const subscriptionCollection = database.collection("subscriptions");
+
+    const JWKS = createRemoteJWKSet(
+      new URL("http://localhost:3000/api/auth/jwks"),
+    );
+
+    // middleware
+    const verifyToken = async (req, res, next) => {
+      try {
+        const authHeader = req.headers.authorization;
+
+        if (!authHeader) {
+          return res.status(401).json({
+            success: false,
+            message: "Unauthorized. No token provided.",
+          });
+        }
+
+        const token = authHeader.split(" ")[1];
+
+        console.log("TOKEN:", token);
+
+        // JWT Verify
+        const { payload } = await jwtVerify(token, JWKS);
+
+        // পরবর্তীতে ব্যবহার করার জন্য payload req তে রেখে দিচ্ছি
+        req.user = payload;
+
+        next();
+      } catch (error) {
+        console.error("Token verification failed:", error);
+
+        return res.status(401).json({
+          success: false,
+          message: "Invalid or expired token.",
+        });
+      }
+    };
+
+    //  Role-based middleware
+    // const verifyRole = (allowedRoles) => {
+    //   return async (req, res, next) => {
+    //     try {
+    //       // req.user থেকে ইমেইল বা আইডি পাওয়া যাবে (আপনার payload এ কি দিয়ে ইউজার আইডেন্টিফাই করা হয় চেক করে নেবেন, যেমন: req.user.email বা req.user.id)
+    //       const email = req.user?.email;
+
+    //       if (!email) {
+    //         return res.status(401).json({
+    //           success: false,
+    //           message: "Unauthorized. User info not found in token.",
+    //         });
+    //       }
+
+    //       // ডাটাবেজ থেকে ইউজার খুঁজে বের করা
+    //       const user = await userCollection.findOne({ email });
+
+    //       if (!user) {
+    //         return res.status(404).json({
+    //           success: false,
+    //           message: "User not found in database.",
+    //         });
+    //       }
+
+    //       // ইউজারের রোল অনুমোদিত তালিকার (allowedRoles) মধ্যে আছে কিনা চেক করা
+    //       if (!allowedRoles.includes(user.role)) {
+    //         return res.status(403).json({
+    //           success: false,
+    //           message: "Forbidden! You do not have permission to perform this action.",
+    //         });
+    //       }
+
+    //       // রোল মিলে গেলে রিকোয়েস্ট সামনে এগোবে
+    //       next();
+    //     } catch (error) {
+    //       console.error("Role verification failed:", error);
+    //       return res.status(500).json({
+    //         success: false,
+    //         message: error.message,
+    //       });
+    //     }
+    //   };
+    // };
 
     app.get("/", (req, res) => {
       res.send("StartupForge Server is running!");
@@ -93,7 +175,7 @@ async function run() {
 
     // api overview
 
-    app.get("/api/admin/overview", async (req, res) => {
+    app.get("/api/admin/overview", verifyToken, async (req, res) => {
       try {
         const totalUsers = await userCollection.countDocuments();
         const totalStartups = await startupCollection.countDocuments();
@@ -142,35 +224,39 @@ async function run() {
     });
 
     // startup toggling
-    app.patch("/api/admin/startups/:id/status", async (req, res) => {
-      try {
-        const { id } = req.params;
-        const { status } = req.body;
+    app.patch(
+      "/api/admin/startups/:id/status",
+      verifyToken,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const { status } = req.body;
 
-        const result = await startupCollection.updateOne(
-          { _id: new ObjectId(id) },
-          {
-            $set: {
-              status,
+          const result = await startupCollection.updateOne(
+            { _id: new ObjectId(id) },
+            {
+              $set: {
+                status,
+              },
             },
-          },
-        );
+          );
 
-        res.json({
-          success: true,
-          result,
-        });
-      } catch (err) {
-        res.status(500).json({
-          success: false,
-          message: err.message,
-        });
-      }
-    });
+          res.json({
+            success: true,
+            result,
+          });
+        } catch (err) {
+          res.status(500).json({
+            success: false,
+            message: err.message,
+          });
+        }
+      },
+    );
 
     // transaction history api
     // ================= Admin Transactions =================
-    app.get("/api/admin/transactions", async (req, res) => {
+    app.get("/api/admin/transactions", verifyToken, async (req, res) => {
       try {
         const transactions = await subscriptionCollection
           .aggregate([
@@ -295,6 +381,27 @@ async function run() {
           },
         });
 
+        // profile
+        app.get("/api/users/profile", verifyToken, async (req, res) => {
+          try {
+            const { email } = req.query;
+            if (!email) {
+              return res
+                .status(400)
+                .json({ success: false, message: "Email is required" });
+            }
+            const user = await userCollection.findOne({ email });
+            if (!user) {
+              return res
+                .status(404)
+                .json({ success: false, message: "User not found" });
+            }
+            res.status(200).json({ success: true, data: user });
+          } catch (error) {
+            res.status(500).json({ success: false, message: error.message });
+          }
+        });
+
         // ৩. Accepted Members
         const acceptedMembers = await applicationCollection.countDocuments({
           opportunityId: {
@@ -322,7 +429,7 @@ async function run() {
     //  সব স্টার্টআপ কার্ড আকারে দেখানোর জন্য (GET API)
     app.get("/api/public/startups", async (req, res) => {
       try {
-        const { email } = req.query;
+        const { email, limit } = req.query;
 
         const query = {
           $or: [{ status: "approved" }],
@@ -334,10 +441,13 @@ async function run() {
           });
         }
 
-        const startups = await startupCollection
-          .find(query)
-          .sort({ createdAt: -1 })
-          .toArray();
+        let cursor = startupCollection.find(query).sort({ createdAt: -1 });
+
+        if (limit) {
+          cursor = cursor.limit(Number(limit));
+        }
+
+        const startups = await cursor.toArray();
 
         res.status(200).json({
           success: true,
@@ -398,7 +508,7 @@ async function run() {
     });
 
     //  নতুন স্টার্টআপ তৈরি করা (POST API)
-    app.post("/api/startups", async (req, res) => {
+    app.post("/api/startups", verifyToken, async (req, res) => {
       try {
         const startupData = req.body;
         const existingStartup = await startupCollection.findOne({
@@ -440,7 +550,7 @@ async function run() {
     });
 
     //  আইডি দিয়ে স্টার্টআপ প্রোফাইল আপডেট করা (PUT API)
-    app.put("/api/startups/:id", async (req, res) => {
+    app.put("/api/startups/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
         const updatedData = req.body;
@@ -475,7 +585,7 @@ async function run() {
     });
 
     //  আইডি দিয়ে স্টার্টআপ প্রোফাইল ডিলিট করা (DELETE API)
-    app.delete("/api/startups/:id", async (req, res) => {
+    app.delete("/api/startups/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
         const query = { _id: new ObjectId(id) };
@@ -497,7 +607,7 @@ async function run() {
 
     //  নতুন অপরচুনিটি তৈরি করা (POST API)
     // নতুন অপরচুনিটি তৈরি করা (POST API)
-    app.post("/api/opportunities", async (req, res) => {
+    app.post("/api/opportunities", verifyToken, async (req, res) => {
       try {
         const opportunityData = req.body;
 
@@ -536,60 +646,60 @@ async function run() {
 
     // Get all opportunities
     app.get("/api/opportunities", async (req, res) => {
-  try {
-    const { search, workType, commitmentLevel } = req.query;
-    let query = {};
-
-    // ১. Role Title এবং Required Skills এর ওপর ভিত্তি করে $regex দিয়ে কেস-ইনসেন্সিটিভ সার্চ
-    if (search) {
-      query.$or = [
-        { roleTitle: { $regex: search, $options: "i" } },
-        { requiredSkills: { $regex: search, $options: "i" } }
-      ];
-    }
-
-    // ২. Work Type এর ওপর ভিত্তি করে $in ফিল্টার
-    if (workType) {
-      const workTypesArray = workType.split(",");
-      query.workType = { $in: workTypesArray };
-    }
-
-    // ৩. Commitment Level এর ওপর ভিত্তি করে $in ফিল্টার
-    if (commitmentLevel) {
-      const commitmentsArray = commitmentLevel.split(",");
-      query.commitmentLevel = { $in: commitmentsArray };
-    }
-
-    const opportunities = await opportunityCollection
-      .find(query)
-      .sort({ createdAt: -1 })
-      .toArray();
-
-    res.status(200).json({
-      success: true,
-      data: opportunities,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-});
-
-    // Logged-in user's opportunities
-    app.get("/api/opportunities/user/:userId", async (req, res) => {
       try {
-        const { userId } = req.params;
+        const {
+          search,
+          workType,
+          commitmentLevel,
+          page = 1,
+          limit = 6,
+        } = req.query;
 
+        let query = {};
+
+        // ১. Search using $regex
+        if (search) {
+          query.$or = [
+            { roleTitle: { $regex: search, $options: "i" } },
+            { requiredSkills: { $regex: search, $options: "i" } },
+          ];
+        }
+
+        // ২. Work Type filter using $in
+        if (workType) {
+          const workTypesArray = workType.split(",");
+          query.workType = { $in: workTypesArray };
+        }
+
+        // ৩. Commitment Level filter using $in
+        if (commitmentLevel) {
+          const commitmentsArray = commitmentLevel.split(",");
+          query.commitmentLevel = { $in: commitmentsArray };
+        }
+
+        // Pagination
+        const skip = (Number(page) - 1) * Number(limit);
+
+        // Total data count
+        const total = await opportunityCollection.countDocuments(query);
+
+        // Get paginated data
         const opportunities = await opportunityCollection
-          .find({ userId })
+          .find(query)
           .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(Number(limit))
           .toArray();
 
         res.status(200).json({
           success: true,
           data: opportunities,
+          pagination: {
+            total,
+            page: Number(page),
+            limit: Number(limit),
+            totalPages: Math.ceil(total / Number(limit)),
+          },
         });
       } catch (error) {
         res.status(500).json({
@@ -599,8 +709,34 @@ async function run() {
       }
     });
 
+    // Logged-in user's opportunities
+    app.get(
+      "/api/opportunities/user/:userId",
+      verifyToken,
+      async (req, res) => {
+        try {
+          const { userId } = req.params;
+
+          const opportunities = await opportunityCollection
+            .find({ userId })
+            .sort({ createdAt: -1 })
+            .toArray();
+
+          res.status(200).json({
+            success: true,
+            data: opportunities,
+          });
+        } catch (error) {
+          res.status(500).json({
+            success: false,
+            message: error.message,
+          });
+        }
+      },
+    );
+
     //  আইডি দিয়ে অপরচুনিটি আপডেট করা (PUT API)
-    app.put("/api/opportunities/:id", async (req, res) => {
+    app.put("/api/opportunities/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
         const updatedData = req.body;
@@ -635,7 +771,7 @@ async function run() {
     });
 
     //  আইডি দিয়ে অপরচুনিটি ডিলিট করা (DELETE API)
-    app.delete("/api/opportunities/:id", async (req, res) => {
+    app.delete("/api/opportunities/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
         const query = { _id: new ObjectId(id) };
@@ -657,7 +793,7 @@ async function run() {
     });
 
     //  কোলাবোরেটরের নতুন অ্যাপ্লিকেশন সাবমিট করা (POST API)
-    app.post("/api/applications", async (req, res) => {
+    app.post("/api/applications", verifyToken, async (req, res) => {
       try {
         const applicationData = req.body;
 
@@ -728,7 +864,7 @@ async function run() {
     });
 
     //  সব অ্যাপ্লিকেশন বা নির্দিষ্ট অপরচুনিটির অ্যাপ্লিকেশন গেট করা (GET API)
-    app.get("/api/applications", async (req, res) => {
+    app.get("/api/applications", verifyToken, async (req, res) => {
       try {
         console.log("Query:", req.query);
 
@@ -844,7 +980,7 @@ async function run() {
     });
 
     //  ইমেইল অনুযায়ী সব অ্যাপ্লিকেশন গেট করা
-    app.get("/api/applications/:email", async (req, res) => {
+    app.get("/api/applications/:email", verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
 
@@ -946,7 +1082,7 @@ async function run() {
       }
     });
 
-    app.get("/api/admin/users", async (req, res) => {
+    app.get("/api/admin/users", verifyToken, async (req, res) => {
       try {
         const users = await userCollection.find().toArray();
 
@@ -994,7 +1130,7 @@ async function run() {
       }
     });
 
-    app.patch("/api/admin/users/:id", async (req, res) => {
+    app.patch("/api/admin/users/:id", verifyToken, async (req, res) => {
       try {
         const { id } = req.params;
         const { status } = req.body;
@@ -1022,7 +1158,7 @@ async function run() {
       }
     });
 
-    app.patch("/api/admin/users/:id", async (req, res) => {
+    app.patch("/api/admin/users/:id", verifyToken, async (req, res) => {
       try {
         const { id } = req.params;
         const { status } = req.body;
@@ -1050,7 +1186,7 @@ async function run() {
     });
 
     // Admin dashboard এর জন্য সব স্টার্টআপের লিস্ট দেখানোর এপিআই তৈরি করা
-    app.get("/api/admin/startups", async (req, res) => {
+    app.get("/api/admin/startups", verifyToken, async (req, res) => {
       try {
         const startups = await startupCollection
           .find()
