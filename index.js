@@ -7,8 +7,11 @@ require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const { createRemoteJWKSet, jwtVerify } = require("jose-cjs");
 
-//  Middlewares
-app.use(cors());
+app.use(
+  cors({
+    origin: "*",
+  }),
+);
 app.use(express.json());
 
 const uri = process.env.MONGODB_URI;
@@ -24,10 +27,9 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     // Connect the client to the server
-    await client.connect();
+    // await client.connect();
     console.log("Connected successfully to MongoDB!");
 
-    //  ডাটাবেজ এবং কালেকশনসমূহ (আপনার কালেকশন নাম "user" সঠিক রাখা হলো)
     const database = client.db("startupforge_db_user");
     const startupCollection = database.collection("startups");
     const opportunityCollection = database.collection("opportunities");
@@ -36,41 +38,41 @@ async function run() {
     const subscriptionCollection = database.collection("subscriptions");
 
     const JWKS = createRemoteJWKSet(
-      new URL("http://localhost:3000/api/auth/jwks"),
+      new URL(`${process.env.CLIENT_URL}/api/auth/jwks`),
     );
 
     // middleware
-    const verifyToken = async (req, res, next) => {
-      try {
-        const authHeader = req.headers.authorization;
+    // const verifyToken = async (req, res, next) => {
+    //   try {
+    //     const authHeader = req.headers.authorization;
 
-        if (!authHeader) {
-          return res.status(401).json({
-            success: false,
-            message: "Unauthorized. No token provided.",
-          });
-        }
+    //     if (!authHeader) {
+    //       return res.status(401).json({
+    //         success: false,
+    //         message: "Unauthorized. No token provided.",
+    //       });
+    //     }
 
-        const token = authHeader.split(" ")[1];
+    //     const token = authHeader.split(" ")[1];
 
-        console.log("TOKEN:", token);
+    //     console.log("TOKEN:", token);
 
-        // JWT Verify
-        const { payload } = await jwtVerify(token, JWKS);
+    //     // JWT Verify
+    //     const { payload } = await jwtVerify(token, JWKS);
 
-        // পরবর্তীতে ব্যবহার করার জন্য payload req তে রেখে দিচ্ছি
-        req.user = payload;
+    //     // পরবর্তীতে ব্যবহার করার জন্য payload req তে রেখে দিচ্ছি
+    //     req.user = payload;
 
-        next();
-      } catch (error) {
-        console.error("Token verification failed:", error);
+    //     next();
+    //   } catch (error) {
+    //     console.error("Token verification failed:", error);
 
-        return res.status(401).json({
-          success: false,
-          message: "Invalid or expired token.",
-        });
-      }
-    };
+    //     return res.status(401).json({
+    //       success: false,
+    //       message: "Invalid or expired token.",
+    //     });
+    //   }
+    // };
 
     //  Role-based middleware
     // const verifyRole = (allowedRoles) => {
@@ -174,8 +176,7 @@ async function run() {
     });
 
     // api overview
-
-    app.get("/api/admin/overview", verifyToken, async (req, res) => {
+    app.get("/api/admin/overview", async (req, res) => {
       try {
         const totalUsers = await userCollection.countDocuments();
         const totalStartups = await startupCollection.countDocuments();
@@ -226,7 +227,7 @@ async function run() {
     // startup toggling
     app.patch(
       "/api/admin/startups/:id/status",
-      verifyToken,
+
       async (req, res) => {
         try {
           const { id } = req.params;
@@ -255,8 +256,7 @@ async function run() {
     );
 
     // transaction history api
-    // ================= Admin Transactions =================
-    app.get("/api/admin/transactions", verifyToken, async (req, res) => {
+    app.get("/api/admin/transactions", async (req, res) => {
       try {
         const transactions = await subscriptionCollection
           .aggregate([
@@ -353,7 +353,59 @@ async function run() {
       }
     });
 
-    //  ফাউন্ডার ড্যাশবোর্ডের রিয়েল-টাইম ডাটা কাউন্ট এপিআই (GET API)
+    // app.get("/api/founder/stats", async (req, res) => {
+    //   try {
+    //     const { email } = req.query;
+
+    //     if (!email) {
+    //       return res.status(400).json({
+    //         success: false,
+    //         message: "Founder email is required",
+    //       });
+    //     }
+
+    //     // ১. Founder-এর সব Opportunity বের করো
+    //     const opportunities = await opportunityCollection
+    //       .find({ founderEmail: email })
+    //       .toArray();
+
+    //     const totalOpportunities = opportunities.length;
+
+    //     const opportunityIds = opportunities.map((opp) => opp._id);
+
+    //     // ২. ঐ Opportunity-গুলোর মোট Application
+    //     const totalApplications = await applicationCollection.countDocuments({
+    //       opportunityId: {
+    //         $in: opportunityIds,
+    //       },
+    //     });
+
+    //     // profile
+
+    //     // ৩. Accepted Members
+    //     const acceptedMembers = await applicationCollection.countDocuments({
+    //       opportunityId: {
+    //         $in: opportunityIds,
+    //       },
+    //       status: "Accepted",
+    //     });
+
+    //     res.json({
+    //       success: true,
+    //       data: {
+    //         totalOpportunities,
+    //         totalApplications,
+    //         acceptedMembers,
+    //       },
+    //     });
+    //   } catch (err) {
+    //     res.status(500).json({
+    //       success: false,
+    //       message: err.message,
+    //     });
+    //   }
+    // });
+
     app.get("/api/founder/stats", async (req, res) => {
       try {
         const { email } = req.query;
@@ -365,52 +417,57 @@ async function run() {
           });
         }
 
-        // ১. Founder-এর সব Opportunity বের করো
+        // Founder-এর সব Opportunity
         const opportunities = await opportunityCollection
           .find({ founderEmail: email })
           .toArray();
 
         const totalOpportunities = opportunities.length;
-
         const opportunityIds = opportunities.map((opp) => opp._id);
 
-        // ২. ঐ Opportunity-গুলোর মোট Application
+        // Founder-এর Startup
+        const startup = await startupCollection.findOne({
+          founderEmail: email,
+        });
+
+        // Opportunity + Startup দুইটার Application Count
         const totalApplications = await applicationCollection.countDocuments({
-          opportunityId: {
-            $in: opportunityIds,
-          },
+          $or: [
+            {
+              opportunityId: {
+                $in: opportunityIds,
+              },
+            },
+            ...(startup
+              ? [
+                  {
+                    startupId: startup._id,
+                  },
+                ]
+              : []),
+          ],
         });
 
-        // profile
-        app.get("/api/users/profile", verifyToken, async (req, res) => {
-          try {
-            const { email } = req.query;
-            if (!email) {
-              return res
-                .status(400)
-                .json({ success: false, message: "Email is required" });
-            }
-            const user = await userCollection.findOne({ email });
-            if (!user) {
-              return res
-                .status(404)
-                .json({ success: false, message: "User not found" });
-            }
-            res.status(200).json({ success: true, data: user });
-          } catch (error) {
-            res.status(500).json({ success: false, message: error.message });
-          }
-        });
-
-        // ৩. Accepted Members
+        // Opportunity + Startup দুইটার Accepted Members
         const acceptedMembers = await applicationCollection.countDocuments({
-          opportunityId: {
-            $in: opportunityIds,
-          },
           status: "Accepted",
+          $or: [
+            {
+              opportunityId: {
+                $in: opportunityIds,
+              },
+            },
+            ...(startup
+              ? [
+                  {
+                    startupId: startup._id,
+                  },
+                ]
+              : []),
+          ],
         });
 
-        res.json({
+        res.status(200).json({
           success: true,
           data: {
             totalOpportunities,
@@ -426,7 +483,26 @@ async function run() {
       }
     });
 
-    //  সব স্টার্টআপ কার্ড আকারে দেখানোর জন্য (GET API)
+    app.get("/api/users/profile", async (req, res) => {
+      try {
+        const { email } = req.query;
+        if (!email) {
+          return res
+            .status(400)
+            .json({ success: false, message: "Email is required" });
+        }
+        const user = await userCollection.findOne({ email });
+        if (!user) {
+          return res
+            .status(404)
+            .json({ success: false, message: "User not found" });
+        }
+        res.status(200).json({ success: true, data: user });
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
     app.get("/api/public/startups", async (req, res) => {
       try {
         const { email, limit } = req.query;
@@ -461,7 +537,6 @@ async function run() {
       }
     });
 
-    //  আইডি দিয়ে নির্দিষ্ট স্টার্টআপের ডিটেইলস দেখা (GET API)
     app.get("/api/public/startups/:id", async (req, res) => {
       try {
         const id = req.params.id;
@@ -484,7 +559,6 @@ async function run() {
       }
     });
 
-    //  আইডি দিয়ে নির্দিষ্ট অপরচুনিটির ডিটেইলস দেখা (GET API)
     app.get("/api/public/opportunities/:id", async (req, res) => {
       try {
         const id = req.params.id;
@@ -507,10 +581,10 @@ async function run() {
       }
     });
 
-    //  নতুন স্টার্টআপ তৈরি করা (POST API)
-    app.post("/api/startups", verifyToken, async (req, res) => {
+    app.post("/api/startups", async (req, res) => {
       try {
         const startupData = req.body;
+        // console.log("Startup Data:", startupData);
         const existingStartup = await startupCollection.findOne({
           founderEmail: startupData.founderEmail,
         });
@@ -521,6 +595,7 @@ async function run() {
           });
         }
         startupData.createdAt = new Date();
+
         const result = await startupCollection.insertOne(startupData);
         const savedStartup = await startupCollection.findOne({
           _id: result.insertedId,
@@ -531,7 +606,6 @@ async function run() {
       }
     });
 
-    //  সেশন ইমেইল দিয়ে স্টার্টআপ খুঁজে বের করা (GET API)
     app.get("/api/startups/:email", async (req, res) => {
       try {
         const email = req.params.email;
@@ -549,8 +623,7 @@ async function run() {
       }
     });
 
-    //  আইডি দিয়ে স্টার্টআপ প্রোফাইল আপডেট করা (PUT API)
-    app.put("/api/startups/:id", verifyToken, async (req, res) => {
+    app.put("/api/startups/:id", async (req, res) => {
       try {
         const id = req.params.id;
         const updatedData = req.body;
@@ -584,8 +657,7 @@ async function run() {
       }
     });
 
-    //  আইডি দিয়ে স্টার্টআপ প্রোফাইল ডিলিট করা (DELETE API)
-    app.delete("/api/startups/:id", verifyToken, async (req, res) => {
+    app.delete("/api/startups/:id", async (req, res) => {
       try {
         const id = req.params.id;
         const query = { _id: new ObjectId(id) };
@@ -605,9 +677,57 @@ async function run() {
       }
     });
 
-    //  নতুন অপরচুনিটি তৈরি করা (POST API)
-    // নতুন অপরচুনিটি তৈরি করা (POST API)
-    app.post("/api/opportunities", verifyToken, async (req, res) => {
+    // app.post("/api/opportunities", async (req, res) => {
+    //   try {
+    //     const opportunityData = req.body;
+
+    //     // Founder-এর startup বের করো
+    //     // const startup = await startupCollection.findOne({
+    //     //   founderEmail: opportunityData.founderEmail,
+    //     // });
+
+    //     // if (!startup) {
+    //     //   return res.status(404).json({
+    //     //     success: false,
+    //     //     message: "Startup not found for this founder.",
+    //     //   });
+    //     // }
+
+    //     const newOpportunity = {
+    //       roleTitle: opportunityData.roleTitle,
+    //       requiredSkills: opportunityData.requiredSkills,
+    //       workType: opportunityData.workType,
+    //       commitmentLevel: opportunityData.commitmentLevel,
+    //       deadline: opportunityData.deadline,
+
+    //       userId: opportunityData.userId,
+    //       founderEmail: opportunityData.founderEmail,
+
+    //       // ✅ Startup ID backend থেকে সেট হবে
+    //       startupId: startup._id,
+
+    //       createdAt: new Date(),
+    //     };
+
+    //     const result = await opportunityCollection.insertOne(newOpportunity);
+
+    //     const savedOpportunity = await opportunityCollection.findOne({
+    //       _id: result.insertedId,
+    //     });
+
+    //     res.status(201).json({
+    //       success: true,
+    //       data: savedOpportunity,
+    //     });
+    //   } catch (error) {
+    //     res.status(500).json({
+    //       success: false,
+    //       message: error.message,
+    //     });
+    //   }
+    // });
+
+    app.post("/api/opportunities", async (req, res) => {
       try {
         const opportunityData = req.body;
 
@@ -617,12 +737,13 @@ async function run() {
           workType: opportunityData.workType,
           commitmentLevel: opportunityData.commitmentLevel,
           deadline: opportunityData.deadline,
+
           userId: opportunityData.userId,
-          founderEmail:
-            opportunityData.founderEmail || opportunityData.email || null,
-          startupId: opportunityData.startupId
-            ? new ObjectId(opportunityData.startupId)
-            : null,
+          founderEmail: opportunityData.founderEmail,
+
+          // Startup-এর সাথে সম্পর্ক নেই
+          startupId: null,
+
           createdAt: new Date(),
         };
 
@@ -712,7 +833,7 @@ async function run() {
     // Logged-in user's opportunities
     app.get(
       "/api/opportunities/user/:userId",
-      verifyToken,
+
       async (req, res) => {
         try {
           const { userId } = req.params;
@@ -735,8 +856,7 @@ async function run() {
       },
     );
 
-    //  আইডি দিয়ে অপরচুনিটি আপডেট করা (PUT API)
-    app.put("/api/opportunities/:id", verifyToken, async (req, res) => {
+    app.put("/api/opportunities/:id", async (req, res) => {
       try {
         const id = req.params.id;
         const updatedData = req.body;
@@ -770,8 +890,7 @@ async function run() {
       }
     });
 
-    //  আইডি দিয়ে অপরচুনিটি ডিলিট করা (DELETE API)
-    app.delete("/api/opportunities/:id", verifyToken, async (req, res) => {
+    app.delete("/api/opportunities/:id", async (req, res) => {
       try {
         const id = req.params.id;
         const query = { _id: new ObjectId(id) };
@@ -792,12 +911,90 @@ async function run() {
       }
     });
 
-    //  কোলাবোরেটরের নতুন অ্যাপ্লিকেশন সাবমিট করা (POST API)
-    app.post("/api/applications", verifyToken, async (req, res) => {
-      try {
-        const applicationData = req.body;
+    // app.post("/api/applications", async (req, res) => {
+    //   try {
+    //     const applicationData = req.body;
+    //     console.log(applicationData);
 
-        // 🔹 User check
+    //     // 🔹 User check
+    //     const user = await userCollection.findOne({
+    //       email: applicationData.applicantEmail,
+    //     });
+
+    //     if (!user) {
+    //       return res.status(404).json({
+    //         success: false,
+    //         message: "User not found.",
+    //       });
+    //     }
+
+    //     // 🔹 Only collaborators can apply
+    //     if (user.role?.toLowerCase() !== "collaborator") {
+    //       return res.status(403).json({
+    //         success: false,
+    //         message: "Only collaborators can apply for opportunities.",
+    //       });
+    //     }
+
+    //     // 🔹 Duplicate check
+    //     const alreadyApplied = await applicationCollection.findOne({
+    //       opportunityId: new ObjectId(applicationData.opportunityId),
+    //       applicantEmail: applicationData.applicantEmail,
+    //     });
+
+    //     if (alreadyApplied) {
+    //       return res.status(400).json({
+    //         success: false,
+    //         message: "You have already applied for this opportunity.",
+    //       });
+    //     }
+
+    //     // Save application
+    //     const newApplication = {
+
+    //       opportunityId: new ObjectId(applicationData.opportunityId),
+    //       startupId: applicationData.startupId
+    //         ? new ObjectId(applicationData.startupId)
+    //         : null,
+    //       roleTitle: applicationData.roleTitle,
+    //       founderEmail: applicationData.founderEmail,
+    //       applicantEmail: applicationData.applicantEmail,
+    //       portfolioLink: applicationData.portfolioLink,
+    //       motivationMessage: applicationData.motivationMessage,
+    //       status: "Pending",
+    //       appliedAt: new Date(),
+    //     };
+    //     console.log(newApplication);
+
+    //     const result = await applicationCollection.insertOne(newApplication);
+
+    //     const savedApplication = await applicationCollection.findOne({
+    //       _id: result.insertedId,
+    //     });
+
+    //     res.status(201).json({
+    //       success: true,
+    //       data: savedApplication,
+    //     });
+    //   } catch (error) {
+    //     res.status(500).json({
+    //       success: false,
+    //       message: error.message,
+    //     });
+    //   }
+    // });
+
+    app.post("/api/applications", async (req, res) => {
+      try {
+        console.log("========== REQUEST BODY ==========");
+        console.log(req.body);
+        console.log("applicationType:", req.body.applicationType);
+        console.log("startupId:", req.body.startupId);
+        console.log("opportunityId:", req.body.opportunityId);
+        const applicationData = req.body;
+        console.log("applicationType:", applicationData.applicationType);
+
+        // User check
         const user = await userCollection.findOne({
           email: applicationData.applicantEmail,
         });
@@ -809,38 +1006,56 @@ async function run() {
           });
         }
 
-        // 🔹 Only collaborators can apply
+        // Only collaborators can apply
         if (user.role?.toLowerCase() !== "collaborator") {
           return res.status(403).json({
             success: false,
-            message: "Only collaborators can apply for opportunities.",
+            message: "Only collaborators can apply.",
           });
         }
 
-        // 🔹 Duplicate check
-        const alreadyApplied = await applicationCollection.findOne({
-          opportunityId: new ObjectId(applicationData.opportunityId),
-          applicantEmail: applicationData.applicantEmail,
-        });
+        // Duplicate check
+        let alreadyApplied;
+
+        if (applicationData.applicationType === "startup") {
+          alreadyApplied = await applicationCollection.findOne({
+            startupId: new ObjectId(applicationData.startupId),
+            applicantEmail: applicationData.applicantEmail,
+            applicationType: "startup",
+          });
+        } else if (applicationData.applicationType === "opportunity") {
+          alreadyApplied = await applicationCollection.findOne({
+            opportunityId: new ObjectId(applicationData.opportunityId),
+            applicantEmail: applicationData.applicantEmail,
+            applicationType: "opportunity",
+          });
+        }
 
         if (alreadyApplied) {
           return res.status(400).json({
             success: false,
-            message: "You have already applied for this opportunity.",
+            message: "You have already applied.",
           });
         }
 
         // Save application
         const newApplication = {
-          opportunityId: new ObjectId(applicationData.opportunityId),
+          applicationType: applicationData.applicationType,
+
           startupId: applicationData.startupId
             ? new ObjectId(applicationData.startupId)
             : null,
-          roleTitle: applicationData.roleTitle,
+
+          opportunityId: applicationData.opportunityId
+            ? new ObjectId(applicationData.opportunityId)
+            : null,
+
+          roleTitle: applicationData.roleTitle || null,
           founderEmail: applicationData.founderEmail,
           applicantEmail: applicationData.applicantEmail,
           portfolioLink: applicationData.portfolioLink,
           motivationMessage: applicationData.motivationMessage,
+
           status: "Pending",
           appliedAt: new Date(),
         };
@@ -856,6 +1071,8 @@ async function run() {
           data: savedApplication,
         });
       } catch (error) {
+        console.error(error);
+
         res.status(500).json({
           success: false,
           message: error.message,
@@ -863,8 +1080,7 @@ async function run() {
       }
     });
 
-    //  সব অ্যাপ্লিকেশন বা নির্দিষ্ট অপরচুনিটির অ্যাপ্লিকেশন গেট করা (GET API)
-    app.get("/api/applications", verifyToken, async (req, res) => {
+    app.get("/api/applications", async (req, res) => {
       try {
         console.log("Query:", req.query);
 
@@ -943,7 +1159,6 @@ async function run() {
       }
     });
 
-    //  আইডি দিয়ে নির্দিষ্ট অ্যাপ্লিকেশনের স্ট্যাটাস আপডেট করা (PUT API)
     app.put("/api/applications/:id", async (req, res) => {
       try {
         const id = req.params.id;
@@ -979,8 +1194,7 @@ async function run() {
       }
     });
 
-    //  ইমেইল অনুযায়ী সব অ্যাপ্লিকেশন গেট করা
-    app.get("/api/applications/:email", verifyToken, async (req, res) => {
+    app.get("/api/applications/:email", async (req, res) => {
       try {
         const email = req.params.email;
 
@@ -1040,7 +1254,6 @@ async function run() {
       }
     });
 
-    //  ইমেইল দিয়ে প্রোফাইল ডাটা গেট করা (GET API)
     app.get("/api/profile/:email", async (req, res) => {
       try {
         const email = req.params.email;
@@ -1056,7 +1269,6 @@ async function run() {
       }
     });
 
-    //  ইমেইল দিয়ে প্রোফাইল আপডেট করা (PUT API)
     app.put("/api/profile/:email", async (req, res) => {
       try {
         const email = req.params.email;
@@ -1082,7 +1294,7 @@ async function run() {
       }
     });
 
-    app.get("/api/admin/users", verifyToken, async (req, res) => {
+    app.get("/api/admin/users", async (req, res) => {
       try {
         const users = await userCollection.find().toArray();
 
@@ -1130,7 +1342,7 @@ async function run() {
       }
     });
 
-    app.patch("/api/admin/users/:id", verifyToken, async (req, res) => {
+    app.patch("/api/admin/users/:id", async (req, res) => {
       try {
         const { id } = req.params;
         const { status } = req.body;
@@ -1158,7 +1370,7 @@ async function run() {
       }
     });
 
-    app.patch("/api/admin/users/:id", verifyToken, async (req, res) => {
+    app.patch("/api/admin/users/:id", async (req, res) => {
       try {
         const { id } = req.params;
         const { status } = req.body;
@@ -1185,8 +1397,7 @@ async function run() {
       }
     });
 
-    // Admin dashboard এর জন্য সব স্টার্টআপের লিস্ট দেখানোর এপিআই তৈরি করা
-    app.get("/api/admin/startups", verifyToken, async (req, res) => {
+    app.get("/api/admin/startups", async (req, res) => {
       try {
         const startups = await startupCollection
           .find()
@@ -1205,7 +1416,6 @@ async function run() {
       }
     });
 
-    // Admin dashboard এর জন্য স্টার্টআপের স্ট্যাটাস approved করার এপিআই তৈরি করা
     app.patch("/api/admin/startups/:id/approve", async (req, res) => {
       try {
         const { id } = req.params;
@@ -1233,7 +1443,6 @@ async function run() {
       }
     });
 
-    // remove sratup এর জন্য স্টার্টআপের স্ট্যাটাস rejected করার এপিআই তৈরি করা
     app.delete("/api/admin/startups/:id", async (req, res) => {
       try {
         const { id } = req.params;
@@ -1330,7 +1539,6 @@ async function run() {
       }
     });
 
-    // সার্ভার লিসেনিং অবশ্যই run() ফাংশনের ভেতরে রাখতে হবে যাতে ডাটাবেজ কানেক্ট হওয়ার পরই পোর্ট ওপেন হয়
     app.listen(port, () => {
       console.log(`Server is running on port ${port}`);
     });
